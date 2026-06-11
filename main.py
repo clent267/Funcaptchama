@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string
 import os
 
 app = Flask(__name__)
@@ -8,7 +8,7 @@ ARKOSE_SURL = "https://roblox-api.arkoselabs.com"
 
 @app.route('/')
 def home():
-    return "BUHAY AKO! 💪 DM SELB for orders"
+    return "BUHAY AKO! 💪 DM SELB"
 
 @app.route('/ping')
 def ping():
@@ -50,10 +50,7 @@ def roblox_login_page():
             function setupEnforcement(e) {{
                 e.setConfig({{
                     selector: '#funcaptcha-container',
-                    onCompleted: function(r) {{
-                        token = r.token;
-                        document.getElementById('status').innerHTML = '✅ Captcha Solved!';
-                    }}
+                    onCompleted: function(r) {{ token = r.token; document.getElementById('status').innerHTML = '✅ Solved!'; }}
                 }});
                 e.run();
             }}
@@ -67,7 +64,7 @@ def roblox_login_page():
                 if (!user || !pass) return resEl.textContent = "Enter username and password";
                 if (!token) return resEl.textContent = "Solve captcha first!";
 
-                resEl.textContent = "Sending login...";
+                resEl.textContent = "Sending...\n";
 
                 try {{
                     const resp = await fetch('https://auth.roblox.com/v2/login', {{
@@ -82,9 +79,9 @@ def roblox_login_page():
                         }})
                     }});
                     const data = await resp.json();
-                    resEl.textContent += "\\n\\n" + JSON.stringify(data, null, 2);
+                    resEl.textContent += JSON.stringify(data, null, 2);
                 }} catch(err) {{
-                    resEl.textContent += "\\nError: " + err.message;
+                    resEl.textContent += "Error: " + err.message;
                 }}
             }}
         </script>
