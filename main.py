@@ -1,4 +1,3 @@
-
 from flask import Flask, render_template_string
 import os
 
@@ -11,10 +10,6 @@ ARKOSE_SURL = "https://roblox-api.arkoselabs.com"
 def home():
     return "BUHAY AKO! 💪 DM SELB"
 
-@app.route('/ping')
-def ping():
-    return "OK"
-
 @app.route('/roblox-login')
 def roblox_login_page():
     html = f"""
@@ -26,7 +21,7 @@ def roblox_login_page():
         <style>
             body {{ font-family: Arial, sans-serif; background: #111; color: white; padding: 20px; text-align: center; }}
             .container {{ max-width: 800px; margin: 0 auto; }}
-            #funcaptcha-container {{ border: 1px solid #555; width: 100%; max-width: 700px; height: 580px; margin: 20px auto; }}
+            #funcaptcha-container {{ border: 2px solid #555; width: 100%; max-width: 700px; height: 580px; margin: 20px auto; }}
             input, button {{ padding: 12px; margin: 8px; width: 80%; max-width: 400px; font-size: 16px; }}
             pre {{ background: #1a1a1a; padding: 15px; text-align: left; max-height: 500px; overflow: auto; }}
         </style>
@@ -35,23 +30,31 @@ def roblox_login_page():
     <body>
         <div class="container">
             <h2>Real Roblox FunCaptcha Login</h2>
+            
             <div id="funcaptcha-container"></div>
-            <div id="status">Loading challenge...</div>
+            <div id="status">Loading real challenge... (solve the captcha)</div>
 
-            <h3>Login</h3>
+            <h3>Credentials</h3>
             <input type="text" id="username" placeholder="Username / Email" /><br>
             <input type="password" id="password" placeholder="Password" /><br>
-            <button onclick="startLogin()">Login</button>
+            <button onclick="startLogin()">🚀 Login to Roblox</button>
 
             <pre id="result"></pre>
         </div>
 
         <script>
             let token = "";
+
             function setupEnforcement(e) {{
                 e.setConfig({{
                     selector: '#funcaptcha-container',
-                    onCompleted: function(r) {{ token = r.token; document.getElementById('status').innerHTML = '✅ Solved!'; }}
+                    onCompleted: function(r) {{
+                        token = r.token;
+                        document.getElementById('status').innerHTML = '✅ FunCaptcha Solved!';
+                    }},
+                    onError: function(err) {{ 
+                        document.getElementById('status').innerHTML = '❌ Error: ' + err;
+                    }}
                 }});
                 e.run();
             }}
@@ -62,10 +65,10 @@ def roblox_login_page():
                 const pass = document.getElementById('password').value.trim();
                 const resEl = document.getElementById('result');
 
-                if (!user || !pass) return resEl.textContent = "Enter username and password";
-                if (!token) return resEl.textContent = "Solve captcha first!";
+                if (!user || !pass) return resEl.textContent = "❌ Enter username and password";
+                if (!token) return resEl.textContent = "❌ Solve the captcha first!";
 
-                resEl.textContent = "Sending to Roblox...\n";
+                resEl.textContent = "Sending login request to Roblox...\\n";
 
                 try {{
                     const resp = await fetch('https://auth.roblox.com/v2/login', {{
