@@ -17,71 +17,105 @@ def roblox_login_page():
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>Roblox Login</title>
+        <title>Roblox Login Flow</title>
         <style>
             body {{ font-family: Arial, sans-serif; background: #111; color: white; padding: 20px; text-align: center; }}
-            .container {{ max-width: 800px; margin: 0 auto; }}
-            #funcaptcha-container {{ border: 2px solid #555; width: 100%; max-width: 700px; height: 580px; margin: 20px auto; }}
+            .container {{ max-width: 900px; margin: 0 auto; }}
+            iframe {{ border: 2px solid #555; width: 100%; max-width: 700px; height: 620px; margin: 20px auto; display: block; }}
             input, button {{ padding: 12px; margin: 8px; width: 80%; max-width: 400px; font-size: 16px; }}
             pre {{ background: #1a1a1a; padding: 15px; text-align: left; max-height: 500px; overflow: auto; }}
         </style>
-        <script src="{ARKOSE_SURL}/v2/{ROBLOX_PUBLIC_KEY}/api.js" async defer></script>
     </head>
     <body>
         <div class="container">
-            <h2>Real Roblox FunCaptcha Login</h2>
+            <h2>Roblox Login Flow (Login First → Captcha)</h2>
             
-            <div id="funcaptcha-container"></div>
-            <div id="status">Loading real challenge... (solve the captcha)</div>
-
-            <h3>Credentials</h3>
+            <h3>Enter Credentials First</h3>
             <input type="text" id="username" placeholder="Username / Email" /><br>
             <input type="password" id="password" placeholder="Password" /><br>
-            <button onclick="startLogin()">🚀 Login to Roblox</button>
+            <button onclick="triggerChallenge()">1. Trigger Challenge + Load Captcha</button>
+
+            <div id="captcha-section" style="display:none;">
+                <h3>Solve Captcha Below</h3>
+                <iframe id="captcha-iframe" 
+                        src="" 
+                        allow="fullscreen">
+                </iframe>
+            </div>
+
+            <button onclick="startFinalLogin()" style="margin-top:15px;">2. Send Final Login</button>
 
             <pre id="result"></pre>
         </div>
 
         <script>
-            let token = "";
+            let captchaToken = "";
+            let challengeId = "";
 
-            function setupEnforcement(e) {{
-                e.setConfig({{
-                    selector: '#funcaptcha-container',
-                    onCompleted: function(r) {{
-                        token = r.token;
-                        document.getElementById('status').innerHTML = '✅ FunCaptcha Solved!';
-                    }},
-                    onError: function(err) {{ 
-                        document.getElementById('status').innerHTML = '❌ Error: ' + err;
-                    }}
-                }});
-                e.run();
-            }}
-            window.setupEnforcement = setupEnforcement;
-
-            async function startLogin() {{
+            async function triggerChallenge() {{
                 const user = document.getElementById('username').value.trim();
                 const pass = document.getElementById('password').value.trim();
                 const resEl = document.getElementById('result');
 
-                if (!user || !pass) return resEl.textContent = "❌ Enter username and password";
-                if (!token) return resEl.textContent = "❌ Solve the captcha first!";
+                if (!user || !pass) return resEl.textContent = "Enter username and password first!";
 
-                resEl.textContent = "Sending login request to Roblox...\\n";
+                resEl.textContent = "Triggering Roblox challenge...\n";
 
                 try {{
                     const resp = await fetch('https://auth.roblox.com/v2/login', {{
                         method: 'POST',
-                        headers: {{'Content-Type': 'application/json'}},
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{
+                            ctype: "Username",
+                            cvalue: user,
+                            password: pass
+                        }})
+                    }});
+
+                    challengeId = resp.headers.get('rblx-challenge-id') || "";
+                    resEl.textContent += "Challenge triggered! Loading captcha...\n";
+
+                    // Load real captcha iframe
+                    const iframe = document.getElementById('captcha-iframe');
+                    iframe.src = `https://iframe.arkoselabs.com/\( {ROBLOX_PUBLIC_KEY}/index.html?surl= \){ARKOSE_SURL}`;
+                    document.getElementById('captcha-section').style.display = 'block';
+
+                }} catch(err) {{
+                    resEl.textContent += "Error: " + err.message;
+                }}
+            }}
+
+            // Listen for captcha token
+            window.addEventListener('message', function(e) {{
+                if (e.origin.includes('arkoselabs.com')) {{
+                    captchaToken = e.data;
+                    document.getElementById('result').textContent += "✅ Captcha Token Received!\n";
+                }}
+            }});
+
+            async function startFinalLogin() {{
+                const user = document.getElementById('username').value.trim();
+                const pass = document.getElementById('password').value.trim();
+                const resEl = document.getElementById('result');
+
+                if (!captchaToken) return resEl.textContent += "❌ Solve captcha first!";
+
+                resEl.textContent += "Sending final login with token...\n";
+
+                try {{
+                    const resp = await fetch('https://auth.roblox.com/v2/login', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
                             ctype: "Username",
                             cvalue: user,
                             password: pass,
-                            captchaToken: token,
-                            captchaProvider: "PROVIDER_ARKOS_LABS"
+                            captchaToken: captchaToken,
+                            captchaProvider: "PROVIDER_ARKOS_LABS",
+                            challengeId: challengeId
                         }})
                     }});
+
                     const data = await resp.json();
                     resEl.textContent += JSON.stringify(data, null, 2);
                 }} catch(err) {{
