@@ -1,11 +1,16 @@
-from flask import Flask, render_template_string, request, jsonify
+
+from flask import Flask, render_template_string, request, jsonify, session
 import os
 import requests
+import json
+from datetime import datetime
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-prod")
 
-ROBLOX_PUBLIC_KEY = "476068BF-9607-4799-B53D-966BE98E2B81"
-ARKOSE_SURL = "https://roblox-api.arkoselabs.com"
+# Real Roblox API endpoints
+ROBLOX_AUTH_API = "https://auth.roblox.com"
+ROBLOX_API = "https://www.roblox.com"
 
 @app.route('/')
 def home():
@@ -34,10 +39,11 @@ def roblox_login_page():
             iframe { 
                 border: 2px solid #555; 
                 width: 100%; 
-                max-width: 700px; 
-                height: 620px; 
+                max-width: 500px; 
+                height: 500px; 
                 margin: 20px auto; 
                 display: block; 
+                background: white;
             }
             input, button { 
                 padding: 12px; 
@@ -58,6 +64,10 @@ def roblox_login_page():
             button:hover {
                 background: #0052a3;
             }
+            button:disabled {
+                background: #333;
+                cursor: not-allowed;
+            }
             pre { 
                 background: #1a1a1a; 
                 padding: 15px; 
@@ -66,26 +76,40 @@ def roblox_login_page():
                 overflow: auto;
                 border: 1px solid #555;
                 border-radius: 4px;
+                font-size: 12px;
             }
             .success { color: #00ff00; }
             .error { color: #ff4444; }
+            .info { color: #00aaff; }
+            .section {
+                margin: 20px 0;
+                padding: 15px;
+                border: 1px solid #333;
+                border-radius: 4px;
+            }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>Roblox Login Flow (Login First → Captcha)</h2>
+            <h1>🎮 Roblox Real Login Flow</h1>
             
-            <h3>Enter Credentials First</h3>
-            <input type="text" id="username" placeholder="Username / Email" /><br>
-            <input type="password" id="password" placeholder="Password" /><br>
-            <button onclick="triggerChallenge()">1. Trigger Challenge + Load Captcha</button>
-
-            <div id="captcha-section" style="display:none;">
-                <h3>Solve Captcha Below</h3>
-                <div id="arkose-container"></div>
+            <div class="section">
+                <h3>Step 1: Enter Credentials</h3>
+                <input type="text" id="username" placeholder="Username or Email" /><br>
+                <input type="password" id="password" placeholder="Password" /><br>
+                <button onclick="stepOne()">Start Login Process</button>
             </div>
 
-            <button onclick="startFinalLogin()" style="margin-top:15px;">2. Send Final Login</button>
+            <div id="captcha-section" style="display:none;" class="section">
+                <h3>Step 2: Solve Captcha</h3>
+                <p>Complete the captcha challenge below:</p>
+                <div id="captcha-container"></div>
+            </div>
+
+            <div id="login-section" style="display:none;" class="section">
+                <h3>Step 3: Complete Login</h3>
+                <button onclick="stepThree()">Finalize Login</button>
+            </div>
 
             <pre id="result"></pre>
         </div>
@@ -93,113 +117,139 @@ def roblox_login_page():
         <script src="https://client-api.arkoselabs.com/v2/client.js"></script>
         <script>
             let captchaToken = "";
-            let challengeId = "";
-            let arkoseEngine = null;
+            let challengeMetadata = null;
+            let username = "";
+            let password = "";
 
-            async function triggerChallenge() {
-                const user = document.getElementById('username').value.trim();
-                const pass = document.getElementById('password').value.trim();
+            function log(msg, type = 'info') {
                 const resEl = document.getElementById('result');
+                const timestamp = new Date().toLocaleTimeString();
+                const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+                resEl.textContent += `[${timestamp}] ${prefix} ${msg}\\n`;
+                resEl.scrollTop = resEl.scrollHeight;
+            }
 
-                if (!user || !pass) {
-                    resEl.textContent = "❌ Enter username and password first!";
-                    resEl.className = 'error';
+            async function stepOne() {
+                username = document.getElementById('username').value.trim();
+                password = document.getElementById('password').value.trim();
+                
+                if (!username || !password) {
+                    log('Please enter username and password', 'error');
                     return;
                 }
 
-                resEl.textContent = "Triggering Roblox challenge...\\n";
-                resEl.className = '';
+                log('Initiating login request...', 'info');
 
                 try {
-                    const resp = await fetch('/api/trigger-challenge', {
+                    const resp = await fetch('/api/initiate-login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            username: user,
-                            password: pass
-                        })
+                        body: JSON.stringify({ username, password })
                     });
 
                     const data = await resp.json();
 
                     if (!resp.ok) {
-                        resEl.textContent = `❌ Error: ${data.error}`;
-                        resEl.className = 'error';
+                        log(`Login init failed: ${data.error}`, 'error');
                         return;
                     }
 
-                    challengeId = data.challengeId || "";
-                    resEl.textContent += `✅ Challenge triggered!\\nLoading captcha...\\n`;
-                    
-                    // Initialize Arkose Engine with proper config
-                    document.getElementById('captcha-section').style.display = 'block';
-                    
-                    ARKOSE.setConfig({
-                        variant: 'default',
-                        onCompleted: onCaptchaCompleted,
-                        onError: onCaptchaError,
-                        onReady: () => {
-                            resEl.textContent += "✅ Captcha ready for solving...\\n";
-                        }
-                    });
-
-                    arkoseEngine = new ARKOSE.EngineLoader(data.publicKey, data.arkoseSurl);
+                    if (data.challengeRequired) {
+                        log('Captcha challenge required', 'info');
+                        challengeMetadata = data.metadata;
+                        loadCaptcha(data.metadata);
+                        document.getElementById('captcha-section').style.display = 'block';
+                    } else if (data.success) {
+                        log('Login successful!', 'success');
+                        log(JSON.stringify(data.user, null, 2), 'success');
+                    }
 
                 } catch(err) {
-                    resEl.textContent += `\\n❌ Error: ${err.message}`;
-                    resEl.className = 'error';
+                    log(`Error: ${err.message}`, 'error');
                 }
             }
 
-            function onCaptchaCompleted(response) {
-                captchaToken = response.token || response;
-                document.getElementById('result').textContent += "✅ Captcha Solved! Token Received!\\n";
-                document.getElementById('result').className = 'success';
-            }
-
-            function onCaptchaError(error) {
-                const resEl = document.getElementById('result');
-                resEl.textContent += `\\n❌ Captcha Error: ${error}`;
-                resEl.className = 'error';
-            }
-
-            async function startFinalLogin() {
-                const user = document.getElementById('username').value.trim();
-                const pass = document.getElementById('password').value.trim();
-                const resEl = document.getElementById('result');
-
-                if (!captchaToken) {
-                    resEl.textContent += "\\n❌ Solve captcha first!";
-                    resEl.className = 'error';
+            function loadCaptcha(metadata) {
+                log('Loading Arkose captcha...', 'info');
+                
+                if (typeof ARKOSE === 'undefined') {
+                    log('Arkose SDK not loaded', 'error');
                     return;
                 }
 
-                resEl.textContent += "\\nSending final login with token...\\n";
+                const container = document.getElementById('captcha-container');
+                container.innerHTML = '';
+
+                ARKOSE.setConfig({
+                    variant: 'default',
+                    onCompleted: onCaptchaComplete,
+                    onError: onCaptchaError,
+                    onReady: () => {
+                        log('Captcha widget ready', 'success');
+                    }
+                });
 
                 try {
-                    const resp = await fetch('/api/final-login', {
+                    const loader = new ARKOSE.EngineLoader(
+                        metadata.publicKey,
+                        metadata.surl,
+                        {
+                            target: container,
+                            onCompleted: onCaptchaComplete,
+                            onError: onCaptchaError
+                        }
+                    );
+                } catch(err) {
+                    log(`Captcha load error: ${err.message}`, 'error');
+                }
+            }
+
+            function onCaptchaComplete(response) {
+                log('Captcha solved!', 'success');
+                captchaToken = response.token || response;
+                log(`Token received (${captchaToken.substring(0, 20)}...)`, 'success');
+                document.getElementById('login-section').style.display = 'block';
+            }
+
+            function onCaptchaError(error) {
+                log(`Captcha error: ${error}`, 'error');
+            }
+
+            async function stepThree() {
+                if (!captchaToken) {
+                    log('No captcha token. Solve captcha first.', 'error');
+                    return;
+                }
+
+                log('Sending final login with captcha token...', 'info');
+
+                try {
+                    const resp = await fetch('/api/complete-login', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            username: user,
-                            password: pass,
-                            captchaToken: captchaToken,
-                            challengeId: challengeId
+                            username,
+                            password,
+                            captchaToken,
+                            challengeMetadata
                         })
                     });
 
                     const data = await resp.json();
-                    
+
                     if (!resp.ok) {
-                        resEl.textContent += `❌ Login failed: ${data.error}`;
-                        resEl.className = 'error';
-                    } else {
-                        resEl.textContent += `✅ Login successful!\\n${JSON.stringify(data, null, 2)}`;
-                        resEl.className = 'success';
+                        log(`Login failed: ${data.error}`, 'error');
+                        if (data.details) {
+                            log(JSON.stringify(data.details, null, 2), 'error');
+                        }
+                        return;
                     }
+
+                    log('✅ LOGIN SUCCESSFUL! 🎉', 'success');
+                    log(JSON.stringify(data, null, 2), 'success');
+
                 } catch(err) {
-                    resEl.textContent += `\\n❌ Error: ${err.message}`;
-                    resEl.className = 'error';
+                    log(`Error: ${err.message}`, 'error');
                 }
             }
         </script>
@@ -208,9 +258,12 @@ def roblox_login_page():
     """
     return render_template_string(html)
 
-@app.route('/api/trigger-challenge', methods=['POST'])
-def trigger_challenge():
-    """Server-side endpoint to trigger Roblox challenge"""
+@app.route('/api/initiate-login', methods=['POST'])
+def initiate_login():
+    """
+    Step 1: Initiate login and check if captcha is required
+    This mimics the real Roblox login flow
+    """
     try:
         data = request.json
         username = data.get('username', '').strip()
@@ -219,71 +272,176 @@ def trigger_challenge():
         if not username or not password:
             return jsonify({'error': 'Username and password required'}), 400
 
-        # Call Roblox auth API
-        resp = requests.post('https://auth.roblox.com/v2/login', 
-            json={
-                'ctype': 'Username',
-                'cvalue': username,
-                'password': password
-            },
-            timeout=10
+        # Step 1: Get login metadata from Roblox
+        # First, we need to get the CSRF token
+        log_msg = f"[{datetime.now()}] Fetching login page for CSRF token\n"
+        
+        session_obj = requests.Session()
+        
+        # Get CSRF token
+        csrf_resp = session_obj.get(f"{ROBLOX_AUTH_API}/v2/login")
+        csrf_token = csrf_resp.headers.get('x-csrf-token', '')
+        
+        log_msg += f"[{datetime.now()}] CSRF token obtained\n"
+
+        # Step 2: Attempt login - this should trigger a challenge if needed
+        login_payload = {
+            'ctype': 'Username',
+            'cvalue': username,
+            'password': password
+        }
+
+        headers = {
+            'x-csrf-token': csrf_token,
+            'Content-Type': 'application/json'
+        }
+
+        login_resp = session_obj.post(
+            f"{ROBLOX_AUTH_API}/v2/login",
+            json=login_payload,
+            headers=headers,
+            allow_redirects=False,
+            timeout=15
         )
 
-        challenge_id = resp.headers.get('rblx-challenge-id', '')
-        
-        return jsonify({
-            'challengeId': challenge_id,
-            'publicKey': ROBLOX_PUBLIC_KEY,
-            'arkoseSurl': ARKOSE_SURL,
-            'status': 'challenge_triggered'
-        }), 200
+        log_msg += f"[{datetime.now()}] Login response: {login_resp.status_code}\n"
 
+        response_data = {}
+        try:
+            response_data = login_resp.json()
+        except:
+            pass
+
+        # Check for challenge/captcha requirement
+        if login_resp.status_code == 403:
+            # Captcha required
+            challenge_id = login_resp.headers.get('rblx-challenge-id', '')
+            challenge_metadata = login_resp.headers.get('rblx-challenge-metadata', '')
+            
+            log_msg += f"[{datetime.now()}] Captcha challenge required\n"
+
+            return jsonify({
+                'challengeRequired': True,
+                'metadata': {
+                    'publicKey': '476068BF-9607-4799-B53D-966BE98E2B81',
+                    'surl': 'https://roblox-api.arkoselabs.com',
+                    'challengeId': challenge_id,
+                    'challengeMetadata': challenge_metadata
+                },
+                'sessionCookie': session_obj.cookies.get_dict(),
+                'logs': log_msg
+            }), 200
+
+        elif login_resp.status_code == 200:
+            # Successful login without captcha
+            log_msg += f"[{datetime.now()}] Login successful\n"
+            return jsonify({
+                'success': True,
+                'user': response_data.get('user', {}),
+                'logs': log_msg
+            }), 200
+
+        else:
+            # Other error
+            return jsonify({
+                'error': response_data.get('message', 'Login failed'),
+                'status': login_resp.status_code,
+                'details': response_data,
+                'logs': log_msg
+            }), login_resp.status_code
+
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Request timeout - Roblox API not responding'}), 500
     except requests.exceptions.RequestException as e:
-        return jsonify({'error': f'Roblox API error: {str(e)}'}), 500
+        return jsonify({'error': f'Network error: {str(e)}'}), 500
     except Exception as e:
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
-@app.route('/api/final-login', methods=['POST'])
-def final_login():
-    """Server-side endpoint for final login with captcha token"""
+@app.route('/api/complete-login', methods=['POST'])
+def complete_login():
+    """
+    Step 2: Complete login with captcha token
+    """
     try:
         data = request.json
         username = data.get('username', '').strip()
         password = data.get('password', '').strip()
         captcha_token = data.get('captchaToken', '').strip()
-        challenge_id = data.get('challengeId', '').strip()
+        challenge_metadata = data.get('challengeMetadata', {})
 
         if not all([username, password, captcha_token]):
             return jsonify({'error': 'Missing required fields'}), 400
 
-        # Send final login request to Roblox
-        resp = requests.post('https://auth.roblox.com/v2/login',
-            json={
-                'ctype': 'Username',
-                'cvalue': username,
-                'password': password,
-                'captchaToken': captcha_token,
-                'captchaProvider': 'PROVIDER_ARKOS_LABS',
-                'challengeId': challenge_id
-            },
-            timeout=10
+        # Create new session for final login
+        session_obj = requests.Session()
+
+        # Get fresh CSRF token
+        csrf_resp = session_obj.get(f"{ROBLOX_AUTH_API}/v2/login")
+        csrf_token = csrf_resp.headers.get('x-csrf-token', '')
+
+        # Prepare final login payload with captcha
+        login_payload = {
+            'ctype': 'Username',
+            'cvalue': username,
+            'password': password,
+            'captchaToken': captcha_token,
+            'captchaProvider': 'PROVIDER_ARKOS_LABS'
+        }
+
+        # Add challenge ID if available
+        if challenge_metadata.get('challengeId'):
+            login_payload['challengeId'] = challenge_metadata['challengeId']
+
+        headers = {
+            'x-csrf-token': csrf_token,
+            'Content-Type': 'application/json'
+        }
+
+        # Send final login request
+        login_resp = session_obj.post(
+            f"{ROBLOX_AUTH_API}/v2/login",
+            json=login_payload,
+            headers=headers,
+            allow_redirects=False,
+            timeout=15
         )
 
-        result = resp.json()
+        response_data = {}
+        try:
+            response_data = login_resp.json()
+        except:
+            pass
 
-        if resp.status_code == 200:
+        if login_resp.status_code == 200:
+            # Extract user info and session
+            user_info = response_data.get('user', {})
+            
+            # Get cookies for session validation
+            cookies = session_obj.cookies.get_dict()
+
             return jsonify({
-                'status': 'success',
-                'data': result
+                'success': True,
+                'message': 'Login successful!',
+                'user': {
+                    'id': user_info.get('id'),
+                    'name': user_info.get('name'),
+                    'displayName': user_info.get('displayName'),
+                    'email': user_info.get('email'),
+                },
+                'sessionCookies': cookies,
+                'fullResponse': response_data
             }), 200
         else:
             return jsonify({
-                'error': result.get('message', 'Login failed'),
-                'details': result
-            }), resp.status_code
+                'error': response_data.get('message', 'Login failed'),
+                'status': login_resp.status_code,
+                'details': response_data
+            }), login_resp.status_code
 
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Request timeout'}), 500
     except requests.exceptions.RequestException as e:
-        return jsonify({'error': f'Roblox API error: {str(e)}'}), 500
+        return jsonify({'error': f'Network error: {str(e)}'}), 500
     except Exception as e:
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
