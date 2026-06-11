@@ -82,9 +82,7 @@ def roblox_login_page():
 
             <div id="captcha-section" style="display:none;">
                 <h3>Solve Captcha Below</h3>
-                <iframe id="captcha-iframe" 
-                        allow="fullscreen">
-                </iframe>
+                <div id="arkose-container"></div>
             </div>
 
             <button onclick="startFinalLogin()" style="margin-top:15px;">2. Send Final Login</button>
@@ -92,9 +90,11 @@ def roblox_login_page():
             <pre id="result"></pre>
         </div>
 
+        <script src="https://client-api.arkoselabs.com/v2/client.js"></script>
         <script>
             let captchaToken = "";
             let challengeId = "";
+            let arkoseEngine = null;
 
             async function triggerChallenge() {
                 const user = document.getElementById('username').value.trim();
@@ -131,11 +131,19 @@ def roblox_login_page():
                     challengeId = data.challengeId || "";
                     resEl.textContent += `✅ Challenge triggered!\\nLoading captcha...\\n`;
                     
-                    // Load captcha iframe with proper URL encoding
-                    const iframe = document.getElementById('captcha-iframe');
-                    const captchaUrl = `https://iframe.arkoselabs.com/${data.publicKey}/index.html?surl=${encodeURIComponent(data.arkoseSurl)}`;
-                    iframe.src = captchaUrl;
+                    // Initialize Arkose Engine with proper config
                     document.getElementById('captcha-section').style.display = 'block';
+                    
+                    ARKOSE.setConfig({
+                        variant: 'default',
+                        onCompleted: onCaptchaCompleted,
+                        onError: onCaptchaError,
+                        onReady: () => {
+                            resEl.textContent += "✅ Captcha ready for solving...\\n";
+                        }
+                    });
+
+                    arkoseEngine = new ARKOSE.EngineLoader(data.publicKey, data.arkoseSurl);
 
                 } catch(err) {
                     resEl.textContent += `\\n❌ Error: ${err.message}`;
@@ -143,14 +151,17 @@ def roblox_login_page():
                 }
             }
 
-            // Listen for captcha token from iframe
-            window.addEventListener('message', function(e) {
-                if (e.origin.includes('arkoselabs.com')) {
-                    captchaToken = e.data;
-                    document.getElementById('result').textContent += "✅ Captcha Token Received!\\n";
-                    document.getElementById('result').className = 'success';
-                }
-            });
+            function onCaptchaCompleted(response) {
+                captchaToken = response.token || response;
+                document.getElementById('result').textContent += "✅ Captcha Solved! Token Received!\\n";
+                document.getElementById('result').className = 'success';
+            }
+
+            function onCaptchaError(error) {
+                const resEl = document.getElementById('result');
+                resEl.textContent += `\\n❌ Captcha Error: ${error}`;
+                resEl.className = 'error';
+            }
 
             async function startFinalLogin() {
                 const user = document.getElementById('username').value.trim();
